@@ -60,6 +60,39 @@ def test_general_grid_step_half():
     assert abs(res.problem.upper_bound - 2.5) < 1e-9
 
 
+def test_offgrid_pin_raises_at_transform():
+    # A variable pinned (single-var equality) to a value off the grid must fail
+    # at the transformation, not surface as a puzzling infeasible at solve time.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.fix = pyo.Constraint(expr=m.x == 3)  # 3 is not on the even (step-2) grid
+    m.obj = pyo.Objective(expr=m.x)
+    with pytest.raises(ValueError, match="not on its discretization grid"):
+        pyo.TransformationFactory("cp.discretize").apply_to(m, step=2)
+
+
+def test_offgrid_pin_unit_grid_noninteger():
+    # Same guard on the unit grid: a non-integer pin is caught at transform.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.fix = pyo.Constraint(expr=m.x == 2.5)
+    m.obj = pyo.Objective(expr=m.x)
+    with pytest.raises(ValueError, match="not on its discretization grid"):
+        pyo.TransformationFactory("cp.discretize").apply_to(m)  # step=1
+
+
+def test_ongrid_pin_ok():
+    # A pin that lands on the grid transforms and solves fine.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.fix = pyo.Constraint(expr=m.x == 4)  # on the even grid
+    m.obj = pyo.Objective(expr=m.x)
+    pyo.TransformationFactory("cp.discretize").apply_to(m, step=2)
+    res = pyo.SolverFactory("cpsat").solve(m)
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert abs(pyo.value(m.x) - 4) < 1e-9
+
+
 def test_invalid_step_raises():
     m = _mini_layout()
     with pytest.raises(ValueError):

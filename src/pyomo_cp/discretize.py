@@ -33,8 +33,10 @@ from pyomo.core import (
     Transformation,
     TransformationFactory,
     Var,
+    value,
 )
 from pyomo.core.expr import replace_expressions
+from pyomo.repn import generate_standard_repn
 
 _TOL = 1e-9
 
@@ -61,6 +63,51 @@ class DiscretizeTransformation(Transformation):
             self._general_grid(model, float(step))
 
     @staticmethod
+    def _single_var_pin(c):
+        """If equality constraint ``c`` reduces to ``coef*x + const == rhs`` in a
+        single variable ``x``, return ``(x, implied_value)``; else ``None``."""
+        if not c.equality:
+            return None
+        repn = generate_standard_repn(c.body)
+        if not repn.is_linear() or len(repn.linear_vars) != 1:
+            return None
+        coef = float(repn.linear_coefs[0])
+        if coef == 0:
+            return None
+        rhs = float(value(c.upper))
+        return repn.linear_vars[0], (rhs - float(repn.constant)) / coef
+
+    def _check_offgrid_pins(self, model, lb_of, step, n_of):
+        """Raise if any single-variable equality pins a discretized variable to a
+        value off its grid. This is the common, cheaply detectable way
+        discretization turns a feasible model infeasible (e.g. a dimension fixed
+        to an odd value on an even-step grid), caught here rather than surfacing
+        as a puzzling ``infeasible`` at solve time. General (multi-variable)
+        infeasibility is not detectable without solving and is not checked."""
+        for c in model.component_data_objects(
+            Constraint, active=True, descend_into=True
+        ):
+            pin = self._single_var_pin(c)
+            if pin is None:
+                continue
+            v, val = pin
+            if id(v) not in lb_of:
+                continue
+            lb, n = lb_of[id(v)], n_of[id(v)]
+            k = (val - lb) / step
+            kr = round(k)
+            if abs(k - kr) > _TOL or kr < 0 or kr > n:
+                gmax = lb + step * n
+                raise ValueError(
+                    f"pyomo-cp: constraint '{c.name}' pins variable '{v.name}' to "
+                    f"{val:g}, which is not on its discretization grid "
+                    f"({lb:g}, {lb + step:g}, ..., {gmax:g} at step {step:g}). "
+                    f"Discretizing would make the model infeasible. Use a step "
+                    f"that divides the required values (a unit or fractional "
+                    f"grid), or adjust the data/bounds."
+                )
+
+    @staticmethod
     def _bounds_or_raise(v):
         lb, ub = v.bounds
         if lb is None or ub is None:
@@ -71,6 +118,7 @@ class DiscretizeTransformation(Transformation):
         return lb, ub
 
     def _unit_grid(self, model):
+        lb_of, n_of = {}, {}
         for v in model.component_data_objects(Var, active=True, descend_into=True):
             if v.fixed or not v.is_continuous():
                 continue
@@ -85,6 +133,8 @@ class DiscretizeTransformation(Transformation):
             v.domain = Integers
             v.setlb(ilb)
             v.setub(iub)
+            lb_of[id(v)], n_of[id(v)] = ilb, iub - ilb
+        self._check_offgrid_pins(model, lb_of, 1, n_of)
 
     def _general_grid(self, model, step):
         cont = [
@@ -99,6 +149,7 @@ class DiscretizeTransformation(Transformation):
 
         sub = {}
         disc = []
+        lb_of, n_of = {}, {}
         for x in cont:
             lb, ub = self._bounds_or_raise(x)
             n = math.floor((ub - lb) / step + _TOL)
@@ -111,6 +162,11 @@ class DiscretizeTransformation(Transformation):
             model._cp_disc.add_component(f"v{len(disc)}", xi)
             sub[id(x)] = lb + step * xi
             disc.append((x, xi, lb, step))
+            lb_of[id(x)], n_of[id(x)] = lb, n
+
+        # Catch off-grid pins before rewriting the constraints (the check reads
+        # the original single-variable equalities).
+        self._check_offgrid_pins(model, lb_of, step, n_of)
 
         for c in model.component_data_objects(Constraint, active=True, descend_into=True):
             c.set_value(replace_expressions(c.expr, sub))
