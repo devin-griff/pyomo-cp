@@ -1,5 +1,10 @@
 # pyomo-cp
 
+[![PyPI](https://img.shields.io/pypi/v/pyomo-cp.svg)](https://pypi.org/project/pyomo-cp/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pyomo-cp.svg)](https://pypi.org/project/pyomo-cp/)
+[![CI](https://github.com/devin-griff/pyomo-cp/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-griff/pyomo-cp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Constraint-programming backends for [Pyomo](https://www.pyomo.org/): a
 discretization transform plus CP solver interfaces, starting with
 [CP-SAT](https://developers.google.com/optimization/cp/cp_solver) (OR-Tools).
