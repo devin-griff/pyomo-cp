@@ -1,23 +1,27 @@
 """CP-SAT backend.
 
-Translates an integer-domain Pyomo model (variables, linear constraints, and a
-linear objective) into an OR-Tools CP-SAT model, solves it, and loads the
-solution back onto the Pyomo variables.
+Translates a Pyomo model (variables, linear constraints, ``pyomo.gdp``
+disjunctions, and a linear objective) into an OR-Tools CP-SAT model, solves it,
+and loads the solution back onto the Pyomo variables.
 
-Phase 1 covers flat integer models. Continuous variables are rejected with a
-pointer to ``TransformationFactory('cp.discretize')`` rather than discretized
-silently. Disjunctions and logical constraints are Phase 2.
+Disjunctions map to native reified constraints: each disjunct gets an indicator
+BoolVar, its constraints are enforced only when the indicator is true
+(``OnlyEnforceIf``), and the disjunction adds an exactly-one / at-least-one
+selection. Nesting is handled by accumulating the enclosing indicators.
+
+Continuous variables are rejected with a pointer to
+``TransformationFactory('cp.discretize')`` rather than discretized silently.
 
 Registered as ``SolverFactory('cpsat')``. ``ortools`` is imported lazily so the
 package imports without it; install ``pyomo-cp[cpsat]`` to use this backend.
 """
-from pyomo.core import (
-    Constraint,
-    Objective,
-    Var,
-    minimize,
-    value,
-)
+from pyomo.core import Block, Constraint, Objective, Var, minimize, value
+from pyomo.gdp import Disjunction
+
+try:  # LogicalConstraint location has moved across Pyomo versions
+    from pyomo.core import LogicalConstraint
+except ImportError:  # pragma: no cover
+    LogicalConstraint = None
 from pyomo.opt import SolverFactory, SolverResults, SolverStatus, TerminationCondition
 from pyomo.opt.base.solvers import OptSolver
 from pyomo.repn import generate_standard_repn
@@ -26,8 +30,7 @@ _INT_TOL = 1e-9
 
 
 def _as_int(x, what="value"):
-    """Return x as a Python int, or raise if it isn't (near-)integral. CP-SAT
-    requires integer variable bounds, coefficients, and constants."""
+    """Return x as a Python int, or raise if it isn't (near-)integral."""
     xi = round(x)
     if abs(x - xi) > _INT_TOL:
         raise ValueError(
@@ -38,8 +41,8 @@ def _as_int(x, what="value"):
 
 
 def _linear_expr(repn, varmap):
-    """Build a CP-SAT linear expression from a Pyomo standard repn. varmap is
-    keyed by id(var) -> (pyomo_var, cp_var), since Pyomo vars aren't hashable."""
+    """CP-SAT linear expression from a Pyomo standard repn. varmap is keyed by
+    id(var) -> (pyomo_var, cp_var) since Pyomo vars aren't hashable."""
     expr = _as_int(repn.constant, "constant")
     for coef, var in zip(repn.linear_coefs, repn.linear_vars):
         if id(var) in varmap:
@@ -49,12 +52,88 @@ def _linear_expr(repn, varmap):
     return expr
 
 
-def build_cpsat_model(model):
-    """Translate a flat, integer-domain Pyomo model into (CpModel, varmap).
+def _emit_constraint(cpm, c, varmap, enforce):
+    """Add a linear constraint, reified on the enforcing indicators if any."""
+    repn = generate_standard_repn(c.body)
+    if not repn.is_linear():
+        raise ValueError(
+            f"pyomo-cp: constraint '{c.name}' is nonlinear; the CP-SAT backend "
+            f"supports linear constraints only."
+        )
+    expr = _linear_expr(repn, varmap)
+    lits = list(enforce)
 
-    varmap maps each Pyomo VarData to its CP-SAT variable, for solution
-    load-back. Raises ValueError on continuous/unbounded variables, nonlinear
-    expressions, or non-integer data.
+    def add(relation):
+        ct = cpm.Add(relation)
+        if lits:
+            ct.OnlyEnforceIf(lits)
+
+    if c.equality:
+        add(expr == _as_int(value(c.lower), "rhs"))
+    else:
+        if c.lower is not None:
+            add(expr >= _as_int(value(c.lower), "lower bound"))
+        if c.upper is not None:
+            add(expr <= _as_int(value(c.upper), "upper bound"))
+
+
+def _emit_selection(cpm, inds, xor, enforce):
+    """Add the disjunction's selection: exactly-one (xor) or at-least-one, made
+    conditional on the enclosing indicators when nested."""
+    if not inds:
+        return
+    lits = list(enforce)
+    if not lits:
+        if xor:
+            cpm.AddExactlyOne(inds)
+        else:
+            cpm.AddBoolOr(inds)
+    else:
+        # aux = AND(enforce) via min of booleans; then tie the count to it.
+        aux = cpm.NewBoolVar("_pc_sel")
+        cpm.AddMinEquality(aux, lits)
+        if xor:
+            cpm.Add(sum(inds) == aux)
+        else:
+            cpm.Add(sum(inds) >= aux)
+
+
+def _walk(cpm, blk, varmap, enforce=()):
+    """Recursively translate a block/disjunct's constraints and disjunctions,
+    carrying the enclosing indicator literals in `enforce`."""
+    for c in blk.component_data_objects(Constraint, active=True, descend_into=False):
+        _emit_constraint(cpm, c, varmap, enforce)
+
+    if LogicalConstraint is not None:
+        for lc in blk.component_data_objects(
+            LogicalConstraint, active=True, descend_into=False
+        ):
+            raise NotImplementedError(
+                f"pyomo-cp: logical constraint '{lc.name}' is not supported yet "
+                f"(Phase 2b). Express it via disjunctions for now."
+            )
+
+    for disj in blk.component_data_objects(Disjunction, active=True, descend_into=False):
+        inds = []
+        for d in disj.disjuncts:
+            if not d.active:
+                continue
+            ind = cpm.NewBoolVar(d.name)
+            inds.append(ind)
+            _walk(cpm, d, varmap, tuple(enforce) + (ind,))
+        _emit_selection(cpm, inds, bool(getattr(disj, "xor", True)), enforce)
+
+    # regular sub-blocks (Disjuncts have ctype Disjunct, not Block, so excluded)
+    for sub in blk.component_data_objects(Block, active=True, descend_into=False):
+        _walk(cpm, sub, varmap, enforce)
+
+
+def build_cpsat_model(model):
+    """Translate a Pyomo model into (CpModel, varmap).
+
+    varmap maps id(VarData) -> (pyomo_var, cp_var) for solution load-back.
+    Raises ValueError on continuous/unbounded variables, nonlinear expressions,
+    or non-integer data.
     """
     from ortools.sat.python import cp_model
 
@@ -62,8 +141,8 @@ def build_cpsat_model(model):
     varmap = {}
 
     for v in model.component_data_objects(Var, active=True, descend_into=True):
-        if v.fixed:
-            continue  # folded into constants where referenced
+        if v.fixed or id(v) in varmap:
+            continue
         if not (v.is_integer() or v.is_binary()):
             raise ValueError(
                 f"pyomo-cp: variable '{v.name}' is continuous. The CP-SAT "
@@ -73,8 +152,7 @@ def build_cpsat_model(model):
         lb, ub = v.bounds
         if lb is None or ub is None:
             raise ValueError(
-                f"pyomo-cp: variable '{v.name}' must have finite bounds for the "
-                f"CP-SAT backend."
+                f"pyomo-cp: variable '{v.name}' must have finite bounds."
             )
         if v.is_binary():
             varmap[id(v)] = (v, cpm.NewBoolVar(v.name))
@@ -83,21 +161,7 @@ def build_cpsat_model(model):
                 _as_int(lb, "lower bound"), _as_int(ub, "upper bound"), v.name
             ))
 
-    for c in model.component_data_objects(Constraint, active=True, descend_into=True):
-        repn = generate_standard_repn(c.body)
-        if not repn.is_linear():
-            raise ValueError(
-                f"pyomo-cp: constraint '{c.name}' is nonlinear; the CP-SAT "
-                f"backend supports linear constraints only."
-            )
-        expr = _linear_expr(repn, varmap)
-        if c.equality:
-            cpm.Add(expr == _as_int(value(c.lower), "rhs"))
-        else:
-            if c.lower is not None:
-                cpm.Add(expr >= _as_int(value(c.lower), "lower bound"))
-            if c.upper is not None:
-                cpm.Add(expr <= _as_int(value(c.upper), "upper bound"))
+    _walk(cpm, model, varmap)
 
     objs = [o for o in model.component_data_objects(Objective, active=True)]
     if len(objs) > 1:
@@ -120,7 +184,7 @@ def build_cpsat_model(model):
     "cpsat", doc="CP-SAT (OR-Tools) backend for Pyomo (pyomo-cp)."
 )
 class CPSATSolver(OptSolver):
-    """Solve an integer-domain Pyomo model with OR-Tools CP-SAT."""
+    """Solve a Pyomo model (integer, discretized, and GDP) with OR-Tools CP-SAT."""
 
     def __init__(self, **kwds):
         kwds.setdefault("type", "cpsat")
@@ -157,14 +221,14 @@ class CPSATSolver(OptSolver):
             solver.parameters.random_seed = int(seed)
         status = solver.Solve(cpm)
 
-        results = self._build_results(solver, status, cpm)
+        results = self._build_results(solver, status)
         if load_solutions and status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             for v, cpv in varmap.values():
                 v.set_value(solver.Value(cpv))
         return results
 
     @staticmethod
-    def _build_results(solver, status, cpm):
+    def _build_results(solver, status):
         from ortools.sat.python import cp_model
 
         tc = {
@@ -185,12 +249,9 @@ class CPSATSolver(OptSolver):
             else SolverStatus.warning
         )
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            has_obj = cpm.HasObjective() if hasattr(cpm, "HasObjective") else True
             try:
-                obj_val = solver.ObjectiveValue()
-                bound = solver.BestObjectiveBound()
-                results.problem.upper_bound = obj_val
-                results.problem.lower_bound = bound
+                results.problem.upper_bound = solver.ObjectiveValue()
+                results.problem.lower_bound = solver.BestObjectiveBound()
             except Exception:
                 pass
         return results
