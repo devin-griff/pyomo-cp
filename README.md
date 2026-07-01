@@ -13,7 +13,7 @@ constraints instead of being reformulated.
 > **Status: alpha.** Integer models, `pyomo.gdp` disjunctions, logical
 > constraints / Boolean variables, and discretization of continuous variables
 > (any `step`) work end-to-end via `SolverFactory('cpsat')`. Global constraints
-> are not yet supported. See [ROADMAP.md](ROADMAP.md).
+> are not yet supported.
 
 ## Scope
 
