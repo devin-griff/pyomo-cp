@@ -11,8 +11,8 @@ constraint-programming solver, where disjunctions map to native reified
 constraints instead of being reformulated.
 
 > **Status: alpha.** Integer models, `pyomo.gdp` disjunctions, logical
-> constraints / Boolean variables, and unit-grid discretization (`step=1`) work
-> end-to-end via `SolverFactory('cpsat')`. Non-unit grids and global constraints
+> constraints / Boolean variables, and discretization of continuous variables
+> (any `step`) work end-to-end via `SolverFactory('cpsat')`. Global constraints
 > are not yet supported. See [ROADMAP.md](ROADMAP.md).
 
 ## Scope

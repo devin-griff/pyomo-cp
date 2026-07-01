@@ -45,10 +45,25 @@ def test_discretize_then_solve():
     assert (x1 + 2 <= x2) or (x2 + 3 <= x1)
 
 
-def test_step_not_one_raises():
+def test_general_grid_step_half():
+    # minimize x, continuous in [0,5], x >= 2.3, on a step-0.5 grid.
+    # x = 0.5*xi, xi in [0,10]; x>=2.3 -> xi>=5 -> x = 2.5.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 5))
+    m.c = pyo.Constraint(expr=m.x >= 2.3)
+    m.obj = pyo.Objective(expr=m.x)  # minimize
+    pyo.TransformationFactory("cp.discretize").apply_to(m, step=0.5)
+    res = pyo.SolverFactory("cpsat").solve(m)
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert abs(pyo.value(m.x) - 2.5) < 1e-9
+    assert abs(pyo.value(m.obj) - 2.5) < 1e-9
+    assert abs(res.problem.upper_bound - 2.5) < 1e-9
+
+
+def test_invalid_step_raises():
     m = _mini_layout()
-    with pytest.raises(NotImplementedError):
-        pyo.TransformationFactory("cp.discretize").apply_to(m, step=0.5)
+    with pytest.raises(ValueError):
+        pyo.TransformationFactory("cp.discretize").apply_to(m, step=0)
 
 
 def test_leaves_integer_vars_alone():

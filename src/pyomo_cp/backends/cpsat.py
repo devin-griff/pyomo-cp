@@ -56,18 +56,6 @@ def _int_scale(values, max_denom=10**6):
     return lcm
 
 
-def _linear_expr(repn, varmap):
-    """CP-SAT linear expression from a Pyomo standard repn (integer coefficients
-    required; used for the objective)."""
-    expr = _as_int(repn.constant, "constant")
-    for coef, var in zip(repn.linear_coefs, repn.linear_vars):
-        if id(var) in varmap:
-            expr = expr + _as_int(coef, "coefficient") * varmap[id(var)][1]
-        else:
-            expr = expr + _as_int(coef * value(var), "coefficient")
-    return expr
-
-
 def _emit_constraint(cpm, c, varmap, enforce):
     """Add a linear constraint, scaling coefficients to integers and reifying on
     the enforcing indicators if any."""
@@ -282,18 +270,27 @@ def build_cpsat_model(model):
     objs = [o for o in model.component_data_objects(Objective, active=True)]
     if len(objs) > 1:
         raise ValueError("pyomo-cp: multiple active objectives are not supported.")
+    obj_scale = 1
     if objs:
         obj = objs[0]
         repn = generate_standard_repn(obj.expr)
         if not repn.is_linear():
             raise ValueError("pyomo-cp: the objective must be linear.")
-        expr = _linear_expr(repn, varmap)
+        coefs = [float(x) for x in repn.linear_coefs]
+        const = float(repn.constant)
+        obj_scale = _int_scale(coefs + [const])
+        expr = int(round(const * obj_scale))
+        for coef, var in zip(repn.linear_coefs, repn.linear_vars):
+            if id(var) in varmap:
+                expr = expr + int(round(coef * obj_scale)) * varmap[id(var)][1]
+            else:
+                expr = expr + int(round(coef * value(var) * obj_scale))
         if obj.sense == minimize:
             cpm.Minimize(expr)
         else:
             cpm.Maximize(expr)
 
-    return cpm, varmap, boolmap
+    return cpm, varmap, boolmap, obj_scale
 
 
 @SolverFactory.register(
@@ -326,7 +323,7 @@ class CPSATSolver(OptSolver):
         workers = kwds.pop("workers", None)
         seed = kwds.pop("seed", None)
 
-        cpm, varmap, boolmap = build_cpsat_model(model)
+        cpm, varmap, boolmap, obj_scale = build_cpsat_model(model)
 
         solver = cp_model.CpSolver()
         if time_limit is not None:
@@ -337,17 +334,21 @@ class CPSATSolver(OptSolver):
             solver.parameters.random_seed = int(seed)
         status = solver.Solve(cpm)
 
-        results = self._build_results(solver, status)
+        results = self._build_results(solver, status, obj_scale)
         if load_solutions and status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             for v, cpv in varmap.values():
                 v.set_value(solver.Value(cpv))
             for bv in _iter_boolean_vars(model):
                 if id(bv) in boolmap:
                     bv.set_value(bool(solver.Value(boolmap[id(bv)])))
+            # descale non-unit discretization: recover the original continuous
+            # variables from their integer grid variables.
+            for x, xi, lb, step in getattr(model, "_pyomo_cp_disc", []):
+                x.set_value(lb + step * xi.value, skip_validation=True)
         return results
 
     @staticmethod
-    def _build_results(solver, status):
+    def _build_results(solver, status, obj_scale=1):
         from ortools.sat.python import cp_model
 
         tc = {
@@ -369,8 +370,8 @@ class CPSATSolver(OptSolver):
         )
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             try:
-                results.problem.upper_bound = solver.ObjectiveValue()
-                results.problem.lower_bound = solver.BestObjectiveBound()
+                results.problem.upper_bound = solver.ObjectiveValue() / obj_scale
+                results.problem.lower_bound = solver.BestObjectiveBound() / obj_scale
             except Exception:  # noqa: BLE001
                 pass
         return results
