@@ -24,6 +24,7 @@ Two modes:
   automatically via the map stored on the model).
 """
 import math
+from fractions import Fraction
 
 from pyomo.core import (
     Block,
@@ -63,49 +64,91 @@ class DiscretizeTransformation(Transformation):
             self._general_grid(model, float(step))
 
     @staticmethod
-    def _single_var_pin(c):
-        """If equality constraint ``c`` reduces to ``coef*x + const == rhs`` in a
-        single variable ``x``, return ``(x, implied_value)``; else ``None``."""
-        if not c.equality:
-            return None
-        repn = generate_standard_repn(c.body)
-        if not repn.is_linear() or len(repn.linear_vars) != 1:
-            return None
-        coef = float(repn.linear_coefs[0])
-        if coef == 0:
-            return None
-        rhs = float(value(c.upper))
-        return repn.linear_vars[0], (rhs - float(repn.constant)) / coef
+    def _resolve_grid(v, lb_of, step):
+        """Return ``(lb, step)`` describing the grid ``v = lb + step*k`` (integer
+        k) that ``v`` will live on, or ``None`` if it can't be determined (an
+        already-integer variable contributes a unit grid at its lower bound; a
+        continuous variable that isn't being discretized can't be reasoned about,
+        so the constraint is skipped)."""
+        if id(v) in lb_of:
+            return lb_of[id(v)], step
+        if v.is_integer() or v.is_binary():
+            lb = v.lb
+            if lb is not None:
+                return float(lb), 1.0
+        return None
 
     def _check_offgrid_pins(self, model, lb_of, step, n_of):
-        """Raise if any single-variable equality pins a discretized variable to a
-        value off its grid. This is the common, cheaply detectable way
-        discretization turns a feasible model infeasible (e.g. a dimension fixed
-        to an odd value on an even-step grid), caught here rather than surfacing
-        as a puzzling ``infeasible`` at solve time. General (multi-variable)
-        infeasibility is not detectable without solving and is not checked."""
+        """Raise if a linear equality has no solution on the discretization grid.
+
+        Substituting ``x = lb + step*k`` (integer k) turns each equality
+        ``sum a_i x_i == rhs`` into ``sum (a_i step_i) k_i == R``. Cleared to
+        integer coefficients, that has an integer solution only if ``gcd`` of the
+        coefficients divides the right-hand side. When it does not, no grid
+        assignment can satisfy the constraint, so discretizing would make the
+        model infeasible -- caught here rather than surfacing as a puzzling
+        ``infeasible`` at solve time.
+
+        The test ignores variable bounds, so it is a *necessary* condition: it
+        only ever rejects genuinely-infeasible discretizations, never good ones,
+        and it stays silent when a solution might exist (bound-tightness and
+        multi-constraint interactions are left to the solver)."""
         for c in model.component_data_objects(
             Constraint, active=True, descend_into=True
         ):
-            pin = self._single_var_pin(c)
-            if pin is None:
+            if not c.equality:
                 continue
-            v, val = pin
-            if id(v) not in lb_of:
+            repn = generate_standard_repn(c.body)
+            if not repn.is_linear() or not repn.linear_vars:
                 continue
-            lb, n = lb_of[id(v)], n_of[id(v)]
-            k = (val - lb) / step
-            kr = round(k)
-            if abs(k - kr) > _TOL or kr < 0 or kr > n:
-                gmax = lb + step * n
-                raise ValueError(
-                    f"pyomo-cp: constraint '{c.name}' pins variable '{v.name}' to "
-                    f"{val:g}, which is not on its discretization grid "
-                    f"({lb:g}, {lb + step:g}, ..., {gmax:g} at step {step:g}). "
-                    f"Discretizing would make the model infeasible. Use a step "
-                    f"that divides the required values (a unit or fractional "
-                    f"grid), or adjust the data/bounds."
-                )
+            coefs = [float(a) for a in repn.linear_coefs]
+            grids = [self._resolve_grid(v, lb_of, step) for v in repn.linear_vars]
+            if any(g is None for g in grids):
+                continue  # a variable we can't reason about; defer to the solver
+
+            rhs = float(value(c.upper)) - float(repn.constant)
+            # sum a_i (lb_i + step_i k_i) == rhs  =>  sum (a_i step_i) k_i == R
+            residual = rhs - sum(a * lb for a, (lb, st) in zip(coefs, grids))
+            terms = [a * st for a, (lb, st) in zip(coefs, grids)]
+
+            fracs = [Fraction(x).limit_denominator(10 ** 6) for x in terms + [residual]]
+            denom = 1
+            for f in fracs:
+                denom = denom * f.denominator // math.gcd(denom, f.denominator)
+            ints = [int(f * denom) for f in fracs]
+            coeff_gcd = 0
+            for b in ints[:-1]:
+                coeff_gcd = math.gcd(coeff_gcd, abs(b))
+            target = ints[-1]
+
+            feasible = (target == 0) if coeff_gcd == 0 else (target % coeff_gcd == 0)
+            if not feasible:
+                raise ValueError(self._offgrid_message(c, repn, coefs, grids, n_of))
+
+    @staticmethod
+    def _offgrid_message(c, repn, coefs, grids, n_of):
+        if len(repn.linear_vars) == 1:
+            v = repn.linear_vars[0]
+            lb, st = grids[0]
+            val = (float(value(c.upper)) - float(repn.constant)) / coefs[0]
+            n = n_of.get(id(v))
+            if n is not None:
+                grid = f"({lb:g}, {lb + st:g}, ..., {lb + st * n:g} at step {st:g})"
+            else:
+                grid = f"(step {st:g} from {lb:g})"
+            return (
+                f"pyomo-cp: constraint '{c.name}' pins variable '{v.name}' to "
+                f"{val:g}, which is not on its discretization grid {grid}. "
+                f"Discretizing would make the model infeasible. Use a step that "
+                f"divides the required values (a unit or fractional grid), or "
+                f"adjust the data/bounds."
+            )
+        return (
+            f"pyomo-cp: equality constraint '{c.name}' has no solution on the "
+            f"discretization grid (no integer grid assignment satisfies it), so "
+            f"discretizing would make the model infeasible. Use a step that "
+            f"divides the constraint's data, or adjust it."
+        )
 
     @staticmethod
     def _bounds_or_raise(v):

@@ -93,6 +93,31 @@ def test_ongrid_pin_ok():
     assert abs(pyo.value(m.x) - 4) < 1e-9
 
 
+def test_multivar_sum_equality_unreachable_raises():
+    # Each variable fits the even grid, but the sum can't be odd: x+y==5 has no
+    # grid solution. Caught at transform by the gcd/divisibility test.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.y = pyo.Var(bounds=(0, 10))
+    m.c = pyo.Constraint(expr=m.x + m.y == 5)
+    m.obj = pyo.Objective(expr=m.x)
+    with pytest.raises(ValueError, match="no solution on the discretization grid"):
+        pyo.TransformationFactory("cp.discretize").apply_to(m, step=2)
+
+
+def test_multivar_sum_equality_reachable_ok():
+    # x+y==4 is reachable on the even grid; transforms and solves.
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.y = pyo.Var(bounds=(0, 10))
+    m.c = pyo.Constraint(expr=m.x + m.y == 4)
+    m.obj = pyo.Objective(expr=m.x, sense=pyo.maximize)
+    pyo.TransformationFactory("cp.discretize").apply_to(m, step=2)
+    res = pyo.SolverFactory("cpsat").solve(m)
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert abs(pyo.value(m.x) + pyo.value(m.y) - 4) < 1e-9
+
+
 def test_invalid_step_raises():
     m = _mini_layout()
     with pytest.raises(ValueError):
