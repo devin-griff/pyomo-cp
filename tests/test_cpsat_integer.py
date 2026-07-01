@@ -63,6 +63,27 @@ def test_solver_options_passthrough():
         opt.solve(m, options={"definitely_not_a_parameter": 1})
 
 
+def test_tee_streams_through_python_stdout():
+    # tee=True must route the CP-SAT log through sys.stdout (so it shows in
+    # notebooks / respects redirection), not straight to the C-level fd 1.
+    import contextlib
+    import io
+
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 5), domain=pyo.Integers)
+    m.obj = pyo.Objective(expr=m.x, sense=pyo.maximize)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        pyo.SolverFactory("cpsat").solve(m, tee=True, time_limit=5)
+    assert "CpSolverResponse summary" in buf.getvalue()
+
+    quiet = io.StringIO()
+    with contextlib.redirect_stdout(quiet):
+        pyo.SolverFactory("cpsat").solve(m, time_limit=5)
+    assert quiet.getvalue() == ""
+
+
 def test_fractional_coefficients_scaled():
     # x + y/2 <= 2.5 over integer x,y in [0,5]; the backend scales by 2 to
     # 2x + y <= 5. Maximize x+y -> 5 (x=0, y=5).

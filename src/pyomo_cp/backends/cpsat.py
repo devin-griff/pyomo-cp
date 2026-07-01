@@ -11,6 +11,7 @@ with a pointer to ``TransformationFactory('cp.discretize')``.
 Registered as ``SolverFactory('cpsat')``. ``ortools`` is imported lazily so the
 package imports without it; install ``pyomo-cp[cpsat]`` to use this backend.
 """
+import sys
 from fractions import Fraction
 from math import gcd
 
@@ -75,6 +76,13 @@ def _apply_cpsat_options(solver, opts, tee):
     params = solver.parameters
     if tee:
         params.log_search_progress = True
+        # Route the log through Python's stdout so tee behaves like other Pyomo
+        # solvers: visible in notebooks and when sys.stdout is redirected. CP-SAT
+        # otherwise writes straight to the C-level stdout (fd 1), bypassing
+        # sys.stdout. log_to_stdout is turned off so the callback is the only
+        # sink and lines aren't printed twice.
+        params.log_to_stdout = False
+        solver.log_callback = lambda line: print(line, flush=True)
     for key, val in opts.items():
         name = _CPSAT_ALIASES.get(str(key).lower(), key)
         try:
