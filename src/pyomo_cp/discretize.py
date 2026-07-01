@@ -37,9 +37,15 @@ from pyomo.core import (
     value,
 )
 from pyomo.core.expr import replace_expressions
+from pyomo.gdp import Disjunct
 from pyomo.repn import generate_standard_repn
 
 _TOL = 1e-9
+
+# Traverse into Disjunct blocks as well as ordinary Blocks: a GDP model keeps
+# constraints inside its disjuncts, and component_data_objects(descend_into=True)
+# would skip them (Disjunct is a distinct ctype), leaving them un-discretized.
+_DESCEND = (Block, Disjunct)
 
 
 @TransformationFactory.register(
@@ -94,7 +100,7 @@ class DiscretizeTransformation(Transformation):
         and it stays silent when a solution might exist (bound-tightness and
         multi-constraint interactions are left to the solver)."""
         for c in model.component_data_objects(
-            Constraint, active=True, descend_into=True
+            Constraint, active=True, descend_into=_DESCEND
         ):
             if not c.equality:
                 continue
@@ -162,7 +168,7 @@ class DiscretizeTransformation(Transformation):
 
     def _unit_grid(self, model):
         lb_of, n_of = {}, {}
-        for v in model.component_data_objects(Var, active=True, descend_into=True):
+        for v in model.component_data_objects(Var, active=True, descend_into=_DESCEND):
             if v.fixed or not v.is_continuous():
                 continue
             lb, ub = self._bounds_or_raise(v)
@@ -182,7 +188,7 @@ class DiscretizeTransformation(Transformation):
     def _general_grid(self, model, step):
         cont = [
             v
-            for v in model.component_data_objects(Var, active=True, descend_into=True)
+            for v in model.component_data_objects(Var, active=True, descend_into=_DESCEND)
             if v.is_continuous() and not v.fixed
         ]
         if not cont:
@@ -211,9 +217,13 @@ class DiscretizeTransformation(Transformation):
         # the original single-variable equalities).
         self._check_offgrid_pins(model, lb_of, step, n_of)
 
-        for c in model.component_data_objects(Constraint, active=True, descend_into=True):
+        for c in model.component_data_objects(
+            Constraint, active=True, descend_into=_DESCEND
+        ):
             c.set_value(replace_expressions(c.expr, sub))
-        for o in model.component_data_objects(Objective, active=True):
+        for o in model.component_data_objects(
+            Objective, active=True, descend_into=_DESCEND
+        ):
             o.set_value(replace_expressions(o.expr, sub))
 
         for x, xi, lb, stp in disc:

@@ -45,6 +45,17 @@ def test_discretize_then_solve():
     assert (x1 + 2 <= x2) or (x2 + 3 <= x1)
 
 
+def test_disjunction_survives_nonunit_step():
+    # Constraints live *inside* the disjuncts; the non-unit-grid substitution must
+    # descend into Disjunct blocks (not just Blocks) or those constraints keep the
+    # original, now-fixed variables and the model turns spuriously infeasible.
+    m = _mini_layout()
+    pyo.TransformationFactory("cp.discretize").apply_to(m, step=0.5)
+    res = pyo.SolverFactory("cpsat").solve(m)
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert abs(pyo.value(m.obj) - 5) < 1e-9  # same optimum as the unit grid
+
+
 def test_general_grid_step_half():
     # minimize x, continuous in [0,5], x >= 2.3, on a step-0.5 grid.
     # x = 0.5*xi, xi in [0,10]; x>=2.3 -> xi>=5 -> x = 2.5.
