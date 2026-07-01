@@ -34,6 +34,25 @@ That is an **explicit** step (`TransformationFactory('cp.discretize')`), never
 automatic, because the integrality assumption is a modelling decision that
 changes the problem.
 
+## Relationship to `pyomo.contrib.cp`
+
+Pyomo ships an in-tree constraint-programming module, `pyomo.contrib.cp`. It is a
+different tool for a different job, and the two are complementary:
+
+| | `pyomo.contrib.cp` | this package |
+|---|---|---|
+| Role | CP **frontend** | CP **backend** |
+| Built for | scheduling: `IntervalVar`, sequence vars, `Pulse` / step functions, precedence | solving models Pyomo already expresses — no new constructs |
+| Input | a CP model written with the interval API | an existing `pyomo.gdp` / integer / logical model |
+| Continuous variables | none (finite-domain only) | explicit `cp.discretize` onto a grid |
+| Solver | IBM CP Optimizer (commercial, via `docplex`) | CP-SAT / OR-Tools (open-source) |
+
+In one line: `pyomo.contrib.cp` is *write an interval/scheduling model and solve
+it with CP Optimizer*; this package is *take a disjunctive/integer model you'd
+otherwise reformulate to MILP and solve it (optionally discretized) with CP-SAT*.
+They overlap only on logical constraints; the paradigm (interval scheduling vs
+disjunctive/geometric) and the solver (commercial vs open) otherwise differ.
+
 ## Install
 
 ```bash
