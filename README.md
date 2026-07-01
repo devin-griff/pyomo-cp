@@ -10,8 +10,10 @@ solver. `pyomo-cp` adds the missing path: take the same model and solve it with 
 constraint-programming solver, where disjunctions map to native reified
 constraints instead of being reformulated.
 
-> **Status: pre-alpha.** The plugins register but the translation is not yet
-> implemented. See [ROADMAP.md](ROADMAP.md) for the development plan.
+> **Status: alpha.** Integer models, `pyomo.gdp` disjunctions, and unit-grid
+> discretization (`step=1`) work end-to-end via `SolverFactory('cpsat')`.
+> Non-unit grids, logical constraints, and global constraints are not yet
+> supported. See [ROADMAP.md](ROADMAP.md).
 
 ## Scope
 
