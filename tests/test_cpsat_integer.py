@@ -50,6 +50,19 @@ def test_equality_and_minimize():
     assert pyo.value(m.obj) == 4
 
 
+def test_fractional_coefficients_scaled():
+    # x + y/2 <= 2.5 over integer x,y in [0,5]; the backend scales by 2 to
+    # 2x + y <= 5. Maximize x+y -> 5 (x=0, y=5).
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 5), domain=pyo.Integers)
+    m.y = pyo.Var(bounds=(0, 5), domain=pyo.Integers)
+    m.c = pyo.Constraint(expr=m.x + m.y / 2 <= 2.5)
+    m.obj = pyo.Objective(expr=m.x + m.y, sense=pyo.maximize)
+    res = pyo.SolverFactory("cpsat").solve(m)
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert pyo.value(m.obj) == 5
+
+
 def test_continuous_variable_rejected():
     m = pyo.ConcreteModel()
     m.x = pyo.Var(bounds=(0, 1))  # continuous (Reals)

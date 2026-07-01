@@ -15,6 +15,9 @@ Continuous variables are rejected with a pointer to
 Registered as ``SolverFactory('cpsat')``. ``ortools`` is imported lazily so the
 package imports without it; install ``pyomo-cp[cpsat]`` to use this backend.
 """
+from fractions import Fraction
+from math import gcd
+
 from pyomo.core import Block, Constraint, Objective, Var, minimize, value
 from pyomo.gdp import Disjunction
 
@@ -52,15 +55,40 @@ def _linear_expr(repn, varmap):
     return expr
 
 
+def _int_scale(values, max_denom=10**6):
+    """Smallest positive integer s such that s*v is integral for every v.
+    (Clears the denominators of rational coefficients; the variables are integer,
+    so scaling a constraint by a positive integer preserves it.)"""
+    lcm = 1
+    for v in values:
+        d = Fraction(v).limit_denominator(max_denom).denominator
+        lcm = lcm * d // gcd(lcm, d)
+    return lcm
+
+
 def _emit_constraint(cpm, c, varmap, enforce):
-    """Add a linear constraint, reified on the enforcing indicators if any."""
+    """Add a linear constraint, scaling coefficients to integers and reifying on
+    the enforcing indicators if any."""
     repn = generate_standard_repn(c.body)
     if not repn.is_linear():
         raise ValueError(
             f"pyomo-cp: constraint '{c.name}' is nonlinear; the CP-SAT backend "
             f"supports linear constraints only."
         )
-    expr = _linear_expr(repn, varmap)
+    coefs = [float(x) for x in repn.linear_coefs]
+    const = float(repn.constant)
+    lower = None if c.lower is None else float(value(c.lower))
+    upper = None if c.upper is None else float(value(c.upper))
+    rhs = [x for x in (lower, upper) if x is not None]
+    s = _int_scale(coefs + [const] + rhs)
+
+    expr = int(round(const * s))
+    for coef, var in zip(repn.linear_coefs, repn.linear_vars):
+        if id(var) in varmap:
+            expr = expr + int(round(coef * s)) * varmap[id(var)][1]
+        else:  # fixed var folded into the constant
+            expr = expr + int(round(coef * value(var) * s))
+
     lits = list(enforce)
 
     def add(relation):
@@ -69,12 +97,12 @@ def _emit_constraint(cpm, c, varmap, enforce):
             ct.OnlyEnforceIf(lits)
 
     if c.equality:
-        add(expr == _as_int(value(c.lower), "rhs"))
+        add(expr == int(round(lower * s)))
     else:
-        if c.lower is not None:
-            add(expr >= _as_int(value(c.lower), "lower bound"))
-        if c.upper is not None:
-            add(expr <= _as_int(value(c.upper), "upper bound"))
+        if lower is not None:
+            add(expr >= int(round(lower * s)))
+        if upper is not None:
+            add(expr <= int(round(upper * s)))
 
 
 def _emit_selection(cpm, inds, xor, enforce):
