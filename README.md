@@ -40,18 +40,33 @@ changes the problem.
 pip install "pyomo-cp[cpsat]"   # includes OR-Tools for the CP-SAT backend
 ```
 
-## Planned usage
+## Usage
 
 ```python
 import pyomo.environ as pyo
-import pyomo_cp  # registers TransformationFactory('cp.discretize') and SolverFactory('cpsat')
+from pyomo.gdp import Disjunct, Disjunction
+import pyomo_cp  # registers cp.discretize and the cpsat solver
 
+# Two boxes (lengths 2 and 3) that must not overlap on a line; minimize extent.
 m = pyo.ConcreteModel()
-# ... build a pyomo.gdp model ...
+m.x1 = pyo.Var(bounds=(0, 10))          # continuous positions
+m.x2 = pyo.Var(bounds=(0, 10))
+m.L = pyo.Var(bounds=(0, 10))
+m.e1 = pyo.Constraint(expr=m.L >= m.x1 + 2)
+m.e2 = pyo.Constraint(expr=m.L >= m.x2 + 3)
+m.d1 = Disjunct(); m.d1.c = pyo.Constraint(expr=m.x1 + 2 <= m.x2)  # box1 left of box2
+m.d2 = Disjunct(); m.d2.c = pyo.Constraint(expr=m.x2 + 3 <= m.x1)  # box2 left of box1
+m.no = Disjunction(expr=[m.d1, m.d2])
+m.obj = pyo.Objective(expr=m.L)
 
-pyo.TransformationFactory("cp.discretize").apply_to(m, step=1.0)  # explicit
-results = pyo.SolverFactory("cpsat").solve(m, time_limit=60)
+pyo.TransformationFactory("cp.discretize").apply_to(m)      # explicit; unit grid
+res = pyo.SolverFactory("cpsat").solve(m, time_limit=10)
+print(res.solver.termination_condition, pyo.value(m.obj))  # optimal 5.0
 ```
+
+Solver options are passed as friendly aliases (`time_limit`, `workers`, `seed`,
+`gap`) or as raw CP-SAT parameter names via `options={...}`, e.g.
+`solve(m, workers=8, options={"log_search_progress": True})`.
 
 ## License
 

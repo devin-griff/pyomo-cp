@@ -50,6 +50,19 @@ def test_equality_and_minimize():
     assert pyo.value(m.obj) == 4
 
 
+def test_solver_options_passthrough():
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 3), domain=pyo.Integers)
+    m.obj = pyo.Objective(expr=m.x, sense=pyo.maximize)
+    opt = pyo.SolverFactory("cpsat")
+    # friendly aliases + a raw CP-SAT parameter
+    res = opt.solve(m, time_limit=5, workers=2, options={"random_seed": 1})
+    assert res.solver.termination_condition == pyo.TerminationCondition.optimal
+    assert pyo.value(m.obj) == 3
+    with pytest.raises(ValueError, match="unknown CP-SAT parameter"):
+        opt.solve(m, options={"definitely_not_a_parameter": 1})
+
+
 def test_fractional_coefficients_scaled():
     # x + y/2 <= 2.5 over integer x,y in [0,5]; the backend scales by 2 to
     # 2x + y <= 5. Maximize x+y -> 5 (x=0, y=5).

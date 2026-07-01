@@ -56,6 +56,37 @@ def _int_scale(values, max_denom=10**6):
     return lcm
 
 
+# Friendly option names -> CP-SAT (CpSolver.parameters) parameter names.
+_CPSAT_ALIASES = {
+    "time_limit": "max_time_in_seconds",
+    "timelimit": "max_time_in_seconds",
+    "workers": "num_search_workers",
+    "threads": "num_search_workers",
+    "seed": "random_seed",
+    "gap": "relative_gap_limit",
+    "mip_gap": "relative_gap_limit",
+    "mipgap": "relative_gap_limit",
+}
+
+
+def _apply_cpsat_options(solver, opts, tee):
+    """Apply options to a CpSolver's parameters. Friendly aliases map to CP-SAT
+    parameter names; any other key is treated as a raw parameter name."""
+    params = solver.parameters
+    if tee:
+        params.log_search_progress = True
+    for key, val in opts.items():
+        name = _CPSAT_ALIASES.get(str(key).lower(), key)
+        try:
+            current = getattr(params, name)
+        except AttributeError:
+            raise ValueError(
+                f"pyomo-cp: unknown CP-SAT parameter '{key}'; see the OR-Tools "
+                f"CP-SAT parameters for valid names."
+            )
+        setattr(params, name, type(current)(val))
+
+
 def _emit_constraint(cpm, c, varmap, enforce):
     """Add a linear constraint, scaling coefficients to integers and reifying on
     the enforcing indicators if any."""
@@ -316,22 +347,28 @@ class CPSATSolver(OptSolver):
         return True
 
     def solve(self, model, **kwds):
+        self.available(exception_flag=True)
         from ortools.sat.python import cp_model
 
         load_solutions = kwds.pop("load_solutions", True)
-        time_limit = kwds.pop("time_limit", None)
-        workers = kwds.pop("workers", None)
-        seed = kwds.pop("seed", None)
+        tee = kwds.pop("tee", False)
+
+        # Collect options: OptSolver.options, an explicit options= dict, and
+        # friendly keyword aliases (time_limit=, workers=, seed=, gap=, ...).
+        opts = {}
+        try:
+            opts.update({k: v for k, v in self.options.items()})
+        except Exception:  # noqa: BLE001
+            pass
+        opts.update(kwds.pop("options", None) or {})
+        for k in list(kwds):
+            if k.lower() in _CPSAT_ALIASES or k in _CPSAT_ALIASES.values():
+                opts[k] = kwds.pop(k)
 
         cpm, varmap, boolmap, obj_scale = build_cpsat_model(model)
 
         solver = cp_model.CpSolver()
-        if time_limit is not None:
-            solver.parameters.max_time_in_seconds = float(time_limit)
-        if workers is not None:
-            solver.parameters.num_search_workers = int(workers)
-        if seed is not None:
-            solver.parameters.random_seed = int(seed)
+        _apply_cpsat_options(solver, opts, tee)
         status = solver.Solve(cpm)
 
         results = self._build_results(solver, status, obj_scale)
