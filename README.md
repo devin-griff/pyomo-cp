@@ -88,6 +88,10 @@ res = pyo.SolverFactory("cpsat").solve(m, time_limit=10)
 print(res.solver.termination_condition, pyo.value(m.obj))  # optimal 5.0
 ```
 
+See [examples/facility_layout.ipynb](examples/facility_layout.ipynb) for a
+complete worked example: a 17-block plant-layout GDP model solved to proven
+optimality by CP-SAT via `cp.discretize`.
+
 Solver options are passed as friendly aliases (`time_limit`, `workers`, `seed`,
 `gap`) or as raw CP-SAT parameter names via `options={...}`, e.g.
 `solve(m, workers=8, options={"log_search_progress": True})`.
