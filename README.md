@@ -88,7 +88,7 @@ res = pyo.SolverFactory("cpsat").solve(m, time_limit=10)
 print(res.solver.termination_condition, pyo.value(m.obj))  # optimal 5.0
 ```
 
-See [examples/facility_layout.ipynb](examples/facility_layout.ipynb) for a
+See [examples/plant_layout.ipynb](examples/plant_layout.ipynb) for a
 complete worked example: a 17-block plant-layout GDP model solved to proven
 optimality by CP-SAT via `cp.discretize`.
 
