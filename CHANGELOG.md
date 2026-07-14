@@ -12,7 +12,10 @@ All notable changes to this project are documented here. The format is based on
 
 - Relicensed from Apache-2.0 to BSD-3-Clause, matching the Pyomo and
   scientific-Python ecosystem this builds on.
-- Minimum Python is now 3.10 (3.9 is end-of-life).
+- Minimum Python is now 3.10 (3.9 is end-of-life), and the minimum Pyomo is
+  corrected to 6.8.0: the backend has always needed the public Data-class names
+  (from 6.7.2) and NumPy 2.0 support (from 6.8.0), so the old `>=6.7` pin never
+  actually worked.
 - `cp.discretize` validates its `step` option through a `ConfigDict`, so an
   unknown keyword option now raises `ValueError` instead of being ignored.
 
