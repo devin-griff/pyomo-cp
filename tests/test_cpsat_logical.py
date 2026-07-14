@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """Phase 2b: CP-SAT backend on logical constraints / Boolean variables."""
 import pytest
 import pyomo.environ as pyo

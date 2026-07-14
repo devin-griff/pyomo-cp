@@ -9,6 +9,12 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Environments
 .venv/
 venv/

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """pyomo-cp: constraint-programming backends for Pyomo.
 
 Importing this package registers the pyomo-cp plugins:
@@ -8,8 +10,8 @@ Importing this package registers the pyomo-cp plugins:
 
 Scope for now is a *backend framework*: it translates what Pyomo can already
 express (variables, linear constraints, logical constraints, and
-``pyomo.gdp`` disjunctions) to CP solvers. Global-constraint modelling is
-roadmap, not yet supported. See ROADMAP.md.
+``pyomo.gdp`` disjunctions) to CP solvers. Global-constraint modelling is a
+possible future direction, not yet supported.
 """
 from importlib.metadata import PackageNotFoundError, version
 

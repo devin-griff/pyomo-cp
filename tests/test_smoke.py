@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """Phase 0 smoke tests: the package imports and registers its plugins."""
 import pyomo_cp  # noqa: F401  (import registers the plugins)
 from pyomo.core import TransformationFactory

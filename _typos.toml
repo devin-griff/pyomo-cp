@@ -1,0 +1,11 @@
+# Configuration for the `typos` spell-checker (crate-ci/typos), matching the
+# Pyomo contribution guide's spell-check step.
+[files]
+# Executed-notebook outputs carry base64 blobs and verbatim OR-Tools log text
+# (including CP-SAT's own "Bactracks" misspelling); the notebook prose is
+# reviewed by eye instead.
+extend-exclude = ["*.ipynb"]
+
+[default.extend-words]
+# Deliberate abbreviation of "literals" (CP-SAT boolean literals) in cpsat.py.
+lits = "lits"

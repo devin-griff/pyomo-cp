@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """Discretization transformation.
 
 Maps bounded continuous variables onto an integer grid so the model can be
@@ -26,6 +28,7 @@ Two modes:
 import math
 from fractions import Fraction
 
+from pyomo.common.config import ConfigDict, ConfigValue
 from pyomo.core import (
     Block,
     Constraint,
@@ -61,7 +64,35 @@ class DiscretizeTransformation(Transformation):
         Grid resolution (default 1, a unit grid).
     """
 
-    def _apply_to(self, model, step=1, **kwds):
+    CONFIG = ConfigDict("cp.discretize")
+    CONFIG.declare(
+        "step",
+        ConfigValue(
+            default=1,
+            description="Grid resolution: 1 (default) sets a unit integer "
+            "grid in place; any other positive value uses x = lb + step*k.",
+        ),
+    )
+
+    def _apply_to(self, model, **kwds):
+        """Discretize ``model`` in place onto the configured grid.
+
+        Parameters
+        ----------
+        model : Block
+            The model to transform; its bounded continuous variables are
+            discretized while ``pyomo.gdp`` disjunctions are left intact.
+        **kwds
+            The ``step`` option (see ``CONFIG``); unknown options raise.
+
+        Raises
+        ------
+        ValueError
+            If ``step`` is not positive, or a variable is unbounded, has no
+            grid point, or an equality pins a variable off the grid.
+        """
+        config = self.CONFIG(kwds)
+        step = config.step
         if step <= 0:
             raise ValueError("pyomo-cp: cp.discretize step must be positive.")
         if step == 1:
@@ -117,7 +148,7 @@ class DiscretizeTransformation(Transformation):
             residual = rhs - sum(a * lb for a, (lb, st) in zip(coefs, grids))
             terms = [a * st for a, (lb, st) in zip(coefs, grids)]
 
-            fracs = [Fraction(x).limit_denominator(10 ** 6) for x in terms + [residual]]
+            fracs = [Fraction(x).limit_denominator(10**6) for x in terms + [residual]]
             denom = 1
             for f in fracs:
                 denom = denom * f.denominator // math.gcd(denom, f.denominator)
@@ -167,6 +198,8 @@ class DiscretizeTransformation(Transformation):
         return lb, ub
 
     def _unit_grid(self, model):
+        """Set each bounded continuous variable to Integers over its
+        inward-rounded bounds, in place, then check for off-grid pins."""
         lb_of, n_of = {}, {}
         for v in model.component_data_objects(Var, active=True, descend_into=_DESCEND):
             if v.fixed or not v.is_continuous():
@@ -186,9 +219,14 @@ class DiscretizeTransformation(Transformation):
         self._check_offgrid_pins(model, lb_of, 1, n_of)
 
     def _general_grid(self, model, step):
+        """Replace each bounded continuous variable ``x`` by ``lb + step*x_int``
+        with an integer grid variable, substitute it through the constraints
+        and objective, and record the map for descaling after the solve."""
         cont = [
             v
-            for v in model.component_data_objects(Var, active=True, descend_into=_DESCEND)
+            for v in model.component_data_objects(
+                Var, active=True, descend_into=_DESCEND
+            )
             if v.is_continuous() and not v.fixed
         ]
         if not cont:

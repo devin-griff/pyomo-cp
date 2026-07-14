@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """Phase 3: cp.discretize + cpsat end-to-end on a continuous GDP model."""
 import pytest
 import pyomo.environ as pyo
@@ -141,5 +143,5 @@ def test_leaves_integer_vars_alone():
     m.obj = pyo.Objective(expr=m.n, sense=pyo.maximize)
     pyo.TransformationFactory("cp.discretize").apply_to(m)
     assert m.n.is_integer()
-    res = pyo.SolverFactory("cpsat").solve(m)
+    pyo.SolverFactory("cpsat").solve(m)
     assert pyo.value(m.obj) == 5

@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-14
+
+### Changed
+
+- Relicensed from Apache-2.0 to BSD-3-Clause, matching the Pyomo and
+  scientific-Python ecosystem this builds on.
+- Minimum Python is now 3.10 (3.9 is end-of-life).
+- `cp.discretize` validates its `step` option through a `ConfigDict`, so an
+  unknown keyword option now raises `ValueError` instead of being ignored.
+
+### Internal
+
+- Aligned with Pyomo's contribution conventions: NumPy-style docstrings on the
+  public and private API, Black formatting with Pyomo's settings, per-file BSD
+  license headers, and `attempt_import` for the optional OR-Tools dependency.
+- CI gained Black and spell-check gates, coverage, a no-OR-Tools import check,
+  and a minimum-dependency job, and it cuts a GitHub Release from the changelog
+  on each version tag.
+
 ## [0.1.0] - 2026-07-01
 
 First release (alpha).
@@ -30,5 +49,6 @@ First release (alpha).
   CP-SAT search log through Python's stdout (visible in notebooks and when stdout
   is redirected).
 
-[Unreleased]: https://github.com/devin-griff/pyomo-cp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/devin-griff/pyomo-cp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/devin-griff/pyomo-cp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/devin-griff/pyomo-cp/releases/tag/v0.1.0

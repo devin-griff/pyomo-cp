@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/pyomo-cp.svg)](https://pypi.org/project/pyomo-cp/)
 [![Python versions](https://img.shields.io/pypi/pyversions/pyomo-cp.svg)](https://pypi.org/project/pyomo-cp/)
 [![CI](https://github.com/devin-griff/pyomo-cp/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-griff/pyomo-cp/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
 
 Constraint-programming backends for [Pyomo](https://www.pyomo.org/): a
 discretization transform plus CP solver interfaces, starting with
@@ -96,6 +96,11 @@ Solver options are passed as friendly aliases (`time_limit`, `workers`, `seed`,
 `gap`) or as raw CP-SAT parameter names via `options={...}`, e.g.
 `solve(m, workers=8, options={"log_search_progress": True})`.
 
+## Maintainer
+
+Maintained by [@devin-griff](https://github.com/devin-griff). Issues and pull
+requests welcome.
+
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+BSD 3-Clause License. See [LICENSE](LICENSE).

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """CP-SAT backend.
 
 Translates a Pyomo model (variables, linear constraints, ``pyomo.gdp``
@@ -11,14 +13,15 @@ with a pointer to ``TransformationFactory('cp.discretize')``.
 Registered as ``SolverFactory('cpsat')``. ``ortools`` is imported lazily so the
 package imports without it; install ``pyomo-cp[cpsat]`` to use this backend.
 """
-import sys
 from fractions import Fraction
 from math import gcd
 
+from pyomo.common.dependencies import attempt_import
 from pyomo.core import (
     BooleanVar,
     Block,
     Constraint,
+    LogicalConstraint,
     Objective,
     Var,
     minimize,
@@ -30,15 +33,16 @@ from pyomo.opt import SolverFactory, SolverResults, SolverStatus, TerminationCon
 from pyomo.opt.base.solvers import OptSolver
 from pyomo.repn import generate_standard_repn
 
-try:
-    from pyomo.core import LogicalConstraint
-except ImportError:  # pragma: no cover
-    LogicalConstraint = None
+# OR-Tools is optional: deferred via attempt_import so the package imports
+# without it (install pyomo-cp[cpsat]). cp_model imports on first attribute
+# access; cpsat_available is the availability flag that available() returns.
+cp_model, cpsat_available = attempt_import("ortools.sat.python.cp_model")
 
 _INT_TOL = 1e-9
 
 
 def _as_int(x, what="value"):
+    """Round ``x`` to an int, raising if it is not integral within tolerance."""
     xi = round(x)
     if abs(x - xi) > _INT_TOL:
         raise ValueError(
@@ -135,7 +139,10 @@ def _emit_constraint(cpm, c, varmap, enforce):
 
 # --- boolean / logical translation ------------------------------------------
 
+
 def _get_bool(cpm, bv, boolmap, varmap):
+    """Return (memoized) the CP-SAT bool for a Pyomo BooleanVar, linking any
+    associated binary variable that is in scope."""
     if id(bv) in boolmap:
         return boolmap[id(bv)]
     b = cpm.NewBoolVar(bv.name)
@@ -199,6 +206,8 @@ def _to_literal(cpm, expr, boolmap, varmap):
 
 
 def _emit_logical(cpm, lc, boolmap, varmap, enforce):
+    """Emit a LogicalConstraint as CP-SAT boolean constraints; a top-level
+    Exactly/AtMost/AtLeast becomes a reified sum."""
     from pyomo.core.expr.logical_expr import (
         AtLeastExpression,
         AtMostExpression,
@@ -227,16 +236,20 @@ def _emit_logical(cpm, lc, boolmap, varmap, enforce):
 
 
 def _walk(cpm, blk, varmap, boolmap, enforce=()):
+    """Recursively emit a block's constraints, logical constraints, and GDP
+    disjunctions into the CP-SAT model, threading disjunct indicators as
+    enforcing literals."""
     for c in blk.component_data_objects(Constraint, active=True, descend_into=False):
         _emit_constraint(cpm, c, varmap, enforce)
 
-    if LogicalConstraint is not None:
-        for lc in blk.component_data_objects(
-            LogicalConstraint, active=True, descend_into=False
-        ):
-            _emit_logical(cpm, lc, boolmap, varmap, enforce)
+    for lc in blk.component_data_objects(
+        LogicalConstraint, active=True, descend_into=False
+    ):
+        _emit_logical(cpm, lc, boolmap, varmap, enforce)
 
-    for disj in blk.component_data_objects(Disjunction, active=True, descend_into=False):
+    for disj in blk.component_data_objects(
+        Disjunction, active=True, descend_into=False
+    ):
         inds = []
         for d in disj.disjuncts:
             if not d.active:
@@ -251,6 +264,8 @@ def _walk(cpm, blk, varmap, boolmap, enforce=()):
 
 
 def _emit_selection(cpm, inds, xor, enforce):
+    """Add the disjunction's selection over indicator literals (exactly-one for
+    xor, else at-least-one), reified on any enforcing literals."""
     if not inds:
         return
     lits = list(enforce)
@@ -269,13 +284,27 @@ def _emit_selection(cpm, inds, xor, enforce):
 
 
 def build_cpsat_model(model):
-    """Translate a Pyomo model into (CpModel, varmap, boolmap).
+    """Translate a Pyomo model into an OR-Tools CP-SAT model.
 
-    varmap maps id(VarData) -> (pyomo_var, cp_var); boolmap maps
-    id(BooleanVarData) -> cp_bool, both for solution load-back.
+    Parameters
+    ----------
+    model : Block
+        The Pyomo model: integer or discretized variables, linear
+        constraints, ``pyomo.gdp`` disjunctions, logical constraints, and at
+        most one linear objective.
+
+    Returns
+    -------
+    cpm : ortools.sat.python.cp_model.CpModel
+        The translated CP-SAT model.
+    varmap : dict
+        Maps ``id(VarData)`` to ``(pyomo_var, cp_var)`` for solution load-back.
+    boolmap : dict
+        Maps ``id(BooleanVarData)`` to the CP-SAT bool, for solution load-back.
+    obj_scale : int
+        Integer scale applied to the objective; divide the CP-SAT objective
+        value by this to recover the Pyomo objective.
     """
-    from ortools.sat.python import cp_model
-
     cpm = cp_model.CpModel()
     varmap = {}
     boolmap = {}
@@ -291,15 +320,16 @@ def build_cpsat_model(model):
             )
         lb, ub = v.bounds
         if lb is None or ub is None:
-            raise ValueError(
-                f"pyomo-cp: variable '{v.name}' must have finite bounds."
-            )
+            raise ValueError(f"pyomo-cp: variable '{v.name}' must have finite bounds.")
         if v.is_binary():
             varmap[id(v)] = (v, cpm.NewBoolVar(v.name))
         else:
-            varmap[id(v)] = (v, cpm.NewIntVar(
-                _as_int(lb, "lower bound"), _as_int(ub, "upper bound"), v.name
-            ))
+            varmap[id(v)] = (
+                v,
+                cpm.NewIntVar(
+                    _as_int(lb, "lower bound"), _as_int(ub, "upper bound"), v.name
+                ),
+            )
 
     for bv in model.component_data_objects(BooleanVar, active=True, descend_into=True):
         _get_bool(cpm, bv, boolmap, varmap)
@@ -332,9 +362,7 @@ def build_cpsat_model(model):
     return cpm, varmap, boolmap, obj_scale
 
 
-@SolverFactory.register(
-    "cpsat", doc="CP-SAT (OR-Tools) backend for Pyomo (pyomo-cp)."
-)
+@SolverFactory.register("cpsat", doc="CP-SAT (OR-Tools) backend for Pyomo (pyomo-cp).")
 class CPSATSolver(OptSolver):
     """Solve a Pyomo model (integer, discretized, GDP, logical) with CP-SAT."""
 
@@ -343,9 +371,12 @@ class CPSATSolver(OptSolver):
         super().__init__(**kwds)
 
     def available(self, exception_flag=False):
-        try:
-            import ortools  # noqa: F401
-        except ImportError:
+        """Return whether OR-Tools is importable.
+
+        Raises ``RuntimeError`` instead of returning ``False`` when
+        ``exception_flag`` is set and OR-Tools is missing.
+        """
+        if not cpsat_available:
             if exception_flag:
                 raise RuntimeError(
                     "The 'cpsat' backend requires OR-Tools: "
@@ -355,8 +386,23 @@ class CPSATSolver(OptSolver):
         return True
 
     def solve(self, model, **kwds):
+        """Build the CP-SAT model, solve it, and load the solution back.
+
+        Parameters
+        ----------
+        model : Block
+            The Pyomo model to solve.
+        **kwds
+            ``tee``, ``load_solutions``, an ``options`` dict, and friendly
+            option aliases (``time_limit``, ``workers``, ``seed``, ``gap``,
+            ...) or raw CP-SAT parameter names.
+
+        Returns
+        -------
+        SolverResults
+            The Pyomo results object.
+        """
         self.available(exception_flag=True)
-        from ortools.sat.python import cp_model
 
         load_solutions = kwds.pop("load_solutions", True)
         tee = kwds.pop("tee", False)
@@ -394,8 +440,7 @@ class CPSATSolver(OptSolver):
 
     @staticmethod
     def _build_results(solver, status, obj_scale=1):
-        from ortools.sat.python import cp_model
-
+        """Map a CP-SAT status to a Pyomo ``SolverResults``, descaling bounds."""
         tc = {
             cp_model.OPTIMAL: TerminationCondition.optimal,
             cp_model.FEASIBLE: TerminationCondition.feasible,
@@ -423,4 +468,5 @@ class CPSATSolver(OptSolver):
 
 
 def _iter_boolean_vars(model):
+    """Iterate the model's active BooleanVars."""
     return model.component_data_objects(BooleanVar, active=True, descend_into=True)

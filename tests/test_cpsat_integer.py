@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Devin Griffith
+# SPDX-License-Identifier: BSD-3-Clause
 """Phase 1: CP-SAT backend on flat integer models, checked against known optima."""
 import pytest
 import pyomo.environ as pyo
@@ -28,9 +30,7 @@ def test_binary_knapsack():
     m.I = pyo.Set(initialize=[1, 2, 3])
     m.take = pyo.Var(m.I, domain=pyo.Binary)
     m.cap = pyo.Constraint(expr=sum(wt[i] * m.take[i] for i in m.I) <= 5)
-    m.obj = pyo.Objective(
-        expr=sum(val[i] * m.take[i] for i in m.I), sense=pyo.maximize
-    )
+    m.obj = pyo.Objective(expr=sum(val[i] * m.take[i] for i in m.I), sense=pyo.maximize)
 
     res = pyo.SolverFactory("cpsat").solve(m)
     assert res.solver.termination_condition == pyo.TerminationCondition.optimal
