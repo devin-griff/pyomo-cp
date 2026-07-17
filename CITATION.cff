@@ -15,6 +15,7 @@ url: "https://pypi.org/project/pyomo-cp/"
 authors:
   - family-names: Griffith
     given-names: Devin
+    orcid: "https://orcid.org/0009-0008-8619-0971"
 keywords:
   - pyomo
   - constraint programming
