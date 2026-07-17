@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use pyomo-cp in academic work, please cite it as below."
+title: "pyomo-cp: constraint-programming backends for Pyomo"
+abstract: >
+  Constraint-programming backends for Pyomo: a discretization transform plus
+  CP solver interfaces, starting with CP-SAT (OR-Tools), so pyomo.gdp
+  disjunctive and logical models can be solved natively by a CP solver
+  instead of being reformulated to MILP.
+type: software
+license: BSD-3-Clause
+version: 0.2.0
+date-released: 2026-07-14
+repository-code: "https://github.com/devin-griff/pyomo-cp"
+url: "https://pypi.org/project/pyomo-cp/"
+authors:
+  - family-names: Griffith
+    given-names: Devin
+keywords:
+  - pyomo
+  - constraint programming
+  - CP-SAT
+  - disjunctive programming
+  - generalized disjunctive programming
